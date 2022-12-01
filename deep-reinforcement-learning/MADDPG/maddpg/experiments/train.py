@@ -1,4 +1,5 @@
 import argparse
+from operator import truediv
 import numpy as np
 import tensorflow as tf
 import time
@@ -11,19 +12,20 @@ import tensorflow.contrib.layers as layers
 def parse_args():
     parser = argparse.ArgumentParser("Reinforcement Learning experiments for multiagent environments")
     # Environment
-    parser.add_argument("--scenario", type=str, default="simple", help="name of the scenario script")
-    parser.add_argument("--max-episode-len", type=int, default=25, help="maximum episode length")
+    parser.add_argument("--scenario", type=str, default="formation_moving", help="name of the scenario script")
+    parser.add_argument("--max-episode-len", type=int, default=50, help="maximum episode length")
     parser.add_argument("--num-episodes", type=int, default=1000, help="number of episodes")
     parser.add_argument("--num-adversaries", type=int, default=0, help="number of adversaries")
     parser.add_argument("--good-policy", type=str, default="maddpg", help="policy for good agents")
     parser.add_argument("--adv-policy", type=str, default="maddpg", help="policy of adversaries")
     # Core training parameters
-    parser.add_argument("--lr", type=float, default=1e-2, help="learning rate for Adam optimizer")
-    parser.add_argument("--gamma", type=float, default=0.95, help="discount factor")
+    parser.add_argument("--lr", type=float, default=1e-3, help="learning rate for Adam optimizer")
+    parser.add_argument("--gamma", type=float, default=0.90, help="discount factor")
     parser.add_argument("--batch-size", type=int, default=1024, help="number of episodes to optimize at the same time")
-    parser.add_argument("--num-units", type=int, default=64, help="number of units in the mlp")
+    parser.add_argument("--num-units", type=int, default=64*4, help="number of units in the mlp")
     # Checkpointing
     parser.add_argument("--exp-name", type=str, default="exp", help="name of the experiment")
+    parser.add_argument("--policy-name", type=str, default="formation_moving", help="directory in which training state and model should be saved")
     parser.add_argument("--save-dir", type=str, default="./tmp/policy/", help="directory in which training state and model should be saved")
     parser.add_argument("--save-rate", type=int, default=1000, help="save model once every time this many episodes are completed")
     parser.add_argument("--load-dir", type=str, default="", help="directory in which training state and model are loaded")
@@ -74,7 +76,6 @@ def get_trainers(env, num_adversaries, obs_shape_n, arglist):
             local_q_func=(arglist.good_policy=='ddpg')))
     return trainers
 
-
 def train(arglist):
     with U.single_threaded_session():
         # Create environment
@@ -108,6 +109,7 @@ def train(arglist):
 
         print('Starting iterations...')
         while True:
+            # print("————————迭代次数："+str(episode_step))
             # get action
             action_n = [agent.action(obs) for agent, obs in zip(trainers,obs_n)]
             # environment step
@@ -190,4 +192,5 @@ def train(arglist):
 
 if __name__ == '__main__':
     arglist = parse_args()
+    arglist.save_dir="./tmp/policy/"+arglist.policy_name+"/"
     train(arglist)

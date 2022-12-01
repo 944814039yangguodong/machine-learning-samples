@@ -42,7 +42,7 @@ class MultiAgentEnv(gym.Env):
             total_action_space = []
             # physical action space
             if self.discrete_action_space:
-                u_action_space = spaces.Discrete(world.dim_p * 2 + 1)
+                u_action_space = spaces.Discrete(world.dim_p * 2)
             else:
                 u_action_space = spaces.Box(low=-agent.u_range, high=+agent.u_range, shape=(world.dim_p,), dtype=np.float32)
             if agent.movable:
@@ -93,14 +93,12 @@ class MultiAgentEnv(gym.Env):
             obs_n.append(self._get_obs(agent))
             reward_n.append(self._get_reward(agent))
             done_n.append(self._get_done(agent))
-
             info_n['n'].append(self._get_info(agent))
 
         # all agents get total reward in cooperative case
         reward = np.sum(reward_n)
         if self.shared_reward:
             reward_n = [reward] * self.n
-
         return obs_n, reward_n, done_n, info_n
 
     def reset(self):
@@ -145,6 +143,7 @@ class MultiAgentEnv(gym.Env):
         agent.action.u = np.zeros(self.world.dim_p)
         agent.action.c = np.zeros(self.world.dim_c)
         # process action
+        # print("action:"+str(action))
         if isinstance(action_space, MultiDiscrete):
             act = []
             size = action_space.high - action_space.low + 1
@@ -155,7 +154,6 @@ class MultiAgentEnv(gym.Env):
             action = act
         else:
             action = [action]
-
         if agent.movable:
             # physical action
             if self.discrete_action_input:
@@ -171,13 +169,15 @@ class MultiAgentEnv(gym.Env):
                     action[0][:] = 0.0
                     action[0][d] = 1.0
                 if self.discrete_action_space:
-                    agent.action.u[0] += action[0][1] - action[0][2]
-                    agent.action.u[1] += action[0][3] - action[0][4]
+                    # 根据action计算动作力
+                    agent.action.u[0] += action[0][0] - action[0][1]
+                    agent.action.u[1] += action[0][2] - action[0][3]
                 else:
                     agent.action.u = action[0]
-            sensitivity = 5.0
+            sensitivity = 1.0
             if agent.accel is not None:
                 sensitivity = agent.accel
+            # 乘以灵敏度
             agent.action.u *= sensitivity
             action = action[1:]
         if not agent.silent:
@@ -188,6 +188,7 @@ class MultiAgentEnv(gym.Env):
             else:
                 agent.action.c = action[0]
             action = action[1:]
+        # print("最终action.u:"+str(agent.action.u))
         # make sure we used all elements of action
         assert len(action) == 0
 
@@ -209,8 +210,8 @@ class MultiAgentEnv(gym.Env):
                         word = '_'
                     else:
                         word = alphabet[np.argmax(other.state.c)]
-                    message += (other.name + ' to ' + agent.name + ': ' + word + '   ')
-            print(message)
+                        message += (other.name + ' to ' + agent.name + ': ' + word + '   ')
+                        print(message)
 
         for i in range(len(self.viewers)):
             # create viewers (if necessary)

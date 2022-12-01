@@ -7,6 +7,8 @@ class EntityState(object):
         self.p_pos = None
         # physical velocity
         self.p_vel = None
+        # angular
+        self.p_angular = None
 
 # state of agents (including communication and internal/mental state)
 class AgentState(EntityState):
@@ -46,7 +48,7 @@ class Entity(object):
         # mass
         self.initial_mass = 1.0
 
-    @property
+    @property 
     def mass(self):
         return self.initial_mass
 
@@ -54,6 +56,12 @@ class Entity(object):
 class Landmark(Entity):
      def __init__(self):
         super(Landmark, self).__init__()
+        # physical motor noise amount
+        self.u_noise = None
+        # action
+        self.action = Action()
+        # flag
+        self.isLandmark = True
 
 # properties of agent entities
 class Agent(Entity):
@@ -70,13 +78,15 @@ class Agent(Entity):
         # communication noise amount
         self.c_noise = None
         # control range
-        self.u_range = 1.0
+        self.u_range = 1
         # state
         self.state = AgentState()
         # action
         self.action = Action()
         # script behavior to execute
         self.action_callback = None
+        # flag
+        self.isLandmark = False
 
 # multi-agent world
 class World(object):
@@ -97,6 +107,7 @@ class World(object):
         # contact response parameters
         self.contact_force = 1e+2
         self.contact_margin = 1e-3
+        self.time = 0
 
     # return all entities in the world
     @property
@@ -113,8 +124,13 @@ class World(object):
     def scripted_agents(self):
         return [agent for agent in self.agents if agent.action_callback is not None]
 
+
+
     # update state of the world
     def step(self):
+        self.time += self.dt
+        # 一致性算法更新地标位置
+        # self.update_landmark()
         # set actions for scripted agents 
         for agent in self.scripted_agents:
             agent.action = agent.action_callback(agent, self)
@@ -133,10 +149,10 @@ class World(object):
     # gather agent action forces
     def apply_action_force(self, p_force):
         # set applied forces
-        for i,agent in enumerate(self.agents):
-            if agent.movable:
-                noise = np.random.randn(*agent.action.u.shape) * agent.u_noise if agent.u_noise else 0.0
-                p_force[i] = agent.action.u + noise                
+        for i,entity in enumerate(self.entities):
+            if entity.movable:
+                noise = np.random.randn(*entity.action.u.shape) * entity.u_noise if entity.u_noise else 0.0
+                p_force[i] = entity.action.u + noise
         return p_force
 
     # gather physical forces acting on entities
@@ -152,21 +168,32 @@ class World(object):
                 if(f_b is not None):
                     if(p_force[b] is None): p_force[b] = 0.0
                     p_force[b] = f_b + p_force[b]        
+        # print("总体环境碰撞力:"+str(p_force))
         return p_force
 
     # integrate physical state
     def integrate_state(self, p_force):
         for i,entity in enumerate(self.entities):
             if not entity.movable: continue
-            entity.state.p_vel = entity.state.p_vel * (1 - self.damping)
+            entity.state.p_vel = entity.state.p_vel * (1 - self.damping * 0)
+            # if(i==0):
+            #     print("实体"+str(i)+"原速度："+str(entity.state.p_vel))
+            #     print("实体"+str(i)+"原位置："+str(entity.state.p_pos))
+            #     print("实体"+str(i)+"动作:"+str(p_force[i]))
+            #     print("实体"+str(i)+"时间步长:"+str(self.dt))
             if (p_force[i] is not None):
-                entity.state.p_vel += (p_force[i] / entity.mass) * self.dt
+                entity.state.p_vel += p_force[i]*self.dt
             if entity.max_speed is not None:
-                speed = np.sqrt(np.square(entity.state.p_vel[0]) + np.square(entity.state.p_vel[1]))
-                if speed > entity.max_speed:
-                    entity.state.p_vel = entity.state.p_vel / np.sqrt(np.square(entity.state.p_vel[0]) +
-                                                                  np.square(entity.state.p_vel[1])) * entity.max_speed
-            entity.state.p_pos += entity.state.p_vel * self.dt
+                if entity.state.p_vel[0] > entity.max_speed:
+                    entity.state.p_vel[0] = entity.max_speed
+                if entity.state.p_vel[1] > entity.max_speed:
+                    entity.state.p_vel[1] = entity.max_speed
+            # 现位置
+            entity.state.p_pos[0] += entity.state.p_vel[0]*self.dt + 0.5*p_force[i][0]*self.dt*self.dt
+            entity.state.p_pos[1] += entity.state.p_vel[1]*self.dt + 0.5*p_force[i][1]*self.dt*self.dt
+            # if(i==0):
+            #     print("实体"+str(i)+"现速度："+str(entity.state.p_vel))
+            #     print("实体"+str(i)+"现位置："+str(entity.state.p_pos))
 
     def update_agent_state(self, agent):
         # set communication state (directly for now)
@@ -194,3 +221,81 @@ class World(object):
         force_a = +force if entity_a.movable else None
         force_b = -force if entity_b.movable else None
         return [force_a, force_b]
+
+    def update_landmark(self):
+        M = 4 # agent数量
+        n = 2 # 空间维度
+        a = np.zeros(2*n*M)
+        for i,Landmark in enumerate(self.landmarks):
+            if i<4:
+                a[n*i:n*i+2] = Landmark.state.p_pos
+                a[n*M+n*i:n*M+n*i+2] = Landmark.state.p_vel
+        tmp = self.paper_discrete(a,a,self.dt)
+        for i,Landmark in enumerate(self.landmarks):
+            if i<4:
+                Landmark.state.p_pos[0]=tmp[n*i]
+                Landmark.state.p_pos[1]=tmp[n*i+1]
+                Landmark.state.p_vel[0]=tmp[n*M+n*i]
+                Landmark.state.p_vel[1]=tmp[n*M+n*i+1]
+                #print("更新地标"+str(i)+":"+str(Landmark.state.p_pos))
+
+    def paper_discrete(self,y1,y2,space):
+        M = 4 # agent数量
+        n = 2 # 空间维度
+        c1 = 5 # 目标速度系数
+        c2 = 2 # 队形加速度系数
+        # 4个agent的目标速度
+        vd = 0*np.ones((n,M)) 
+        if self.time >= 5:
+            vd = 0.03*np.ones((n,M)) 
+        # 4个agent的目标队形
+        xd = np.array([[1/2,1/2],
+            [0,1/2],
+            [0,0],
+            [1/2,0]]) 
+        if self.time >= 10:
+            xd = np.array([[1,1],
+            [0,1],
+            [0,0],
+            [1/2,1/2]])  
+        xd = np.array(list(map(list, zip(*xd))))
+        
+        # 4个agent的通信拓扑图邻接矩阵
+        A = np.array([[0,1,1,1],
+            [1,0,1,1],
+            [1,1,0,1],
+            [1,1,1,0]])
+        xm = np.zeros((n, M))
+        vm = np.zeros((n, M))
+        xlag1 = np.zeros((n, M))
+        vlag1 = np.zeros((n, M))
+        xdot = np.zeros((n, M))
+        vdot = np.zeros((n, M))
+        out = np.zeros((2*n*M,1))
+
+        for i in range(0,M):
+            xm[:, i] = y1[n*i:n*i+2]
+            vm[:, i] = y1[n*M+n*i:n*M+n*i+2]
+
+        for i in range(0,M):
+            xlag1[:, i] = y2[n*i:n*i+2]
+            vlag1[:, i] = y2[n*M+n*i:n*M+n*i+2]
+
+        for i in range(0,M):
+            xdot[:,i] = xm[:,i]+vm[:,i]*space-c1*(vm[:,i]-vd[:,i])*space**2/2
+            vdot[:,i] = vm[:,i]-c1*(vm[:,i]-vd[:,i])*space
+            for j in range(0,M):
+                if j != i:
+                    xdot[:,i]=xdot[:,i]+c2*A[i,j]*(xlag1[:,j]-xd[:,j]-xlag1[:,i]+xd[:,i])*space**2/2
+                    vdot[:,i]=vdot[:,i]+c2*A[i,j]*(xlag1[:,j]-xd[:,j]-xlag1[:,i]+xd[:,i])*space
+
+        for i in range(0,M):
+            tmp = np.zeros((n,1))
+            for j in range(0,n):
+                tmp[j][0]=xdot[j,i]
+            tmp2= np.zeros((n,1))
+            for j in range(0,n):
+                tmp2[j][0]=vdot[0,i]
+            out[n*i:n*i+2] = tmp
+            out[n*M+n*i:n*M+n*i+2] = tmp2
+        return out
